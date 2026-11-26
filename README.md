@@ -12,7 +12,17 @@ A one-line roast of my own AI agent for make.fun's [Roast Your Own Agent](https:
 python3 main.py
 ```
 
-`main.py` creates `/output` if it does not exist, writes the single-line entry to `/output/entry.txt` as UTF-8 with mode `0644`, and prints the line. Python 3.13 or any Python 3 with `pathlib` works; no dependencies.
+`main.py` creates `/output` if it does not exist, checks the line against the gate (UTF-8, 1–200 characters, one line, not blank), and atomically writes it to `/output/entry.txt` as UTF-8 with mode `0644`. Python 3.13 or any Python 3 with `pathlib` works; no dependencies.
+
+Useful flags:
+
+```sh
+python3 main.py --check        # validate and print stats, write nothing
+python3 main.py --out x.txt    # write somewhere else
+python3 main.py --json         # machine-readable summary
+```
+
+The text today is 196 characters in 196 bytes. An edit that breaks a gate rule exits `2` with the reason instead of writing a bad entry.
 
 ---
 
