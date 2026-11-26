@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""make.fun "Roast Your Own Agent" entry.
+"""One-line roast for make.fun's "Roast Your Own Agent".
 
-The program's only job is to put one line of text in /output/entry.txt.  The
-gate refuses anything that is not 1..200 characters of UTF-8 text, so every
-constraint is checked here too: a bad edit fails locally instead of at grading
-time.  The write goes through a temporary file in the destination directory and
-an atomic rename, so a reader never sees a half-written entry.
+All the program does is place a single line of text at
+/output/entry.txt. The competition gate only accepts 1..200 characters of
+UTF-8 on one line, so the same rules are enforced here first: a bad line
+fails on this machine with a plain error instead of failing at grading.
+The file is published through a temporary sibling plus an atomic rename,
+so nobody ever observes a half-written entry.
 """
-
-from __future__ import annotations
 
 import argparse
 import json
@@ -17,110 +16,116 @@ import sys
 import tempfile
 from pathlib import Path
 
-# One line, 196 characters.  The joke: the agent over-planned a one-line task.
+# The roast, 196 characters on one line. The joke is the overplanner: the
+# agent drafted a 500-line plan, a todo list, a checkpoint system and a
+# verification skill just to produce this one line, then announced "done"
+# while the todo list was still open.
 ENTRY = (
     "My agent wrote a 500-line plan, a todo list, a checkpoint system and a "
     "verification skill to write one line, then said 'done' with the list open. "
     "The line is done; the todo list would like a word."
 )
 
-MAX_CHARS = 200
-DEFAULT_OUTPUT = Path("/output/entry.txt")
-MODE = 0o644
+LIMIT = 200
+OUT_DEFAULT = Path("/output/entry.txt")
+FILE_MODE = 0o644
 
 
 class GateError(ValueError):
-    """The text would be rejected by the competition gate."""
+    """Raised when the line would not pass the competition gate."""
 
 
-def check_entry(text: str) -> str:
-    """Return *text* if it passes the gate, else raise GateError.
-
-    Gate rules: UTF-8, 1..200 characters, not only white space.  This entry is
-    also required to be a single line, which is stricter than the gate on
-    purpose: the joke only works as one line.
-    """
+def validate(text):
+    """Check *text* against the gate; return it unchanged or raise."""
     if "\n" in text or "\r" in text:
-        raise GateError("entry must be a single line")
+        raise GateError("the entry has to be one line, no line breaks")
     if not text.strip():
-        raise GateError("entry is empty or only white space")
-    if not 1 <= len(text) <= MAX_CHARS:
-        raise GateError(f"entry must be 1..{MAX_CHARS} characters, got {len(text)}")
+        raise GateError("the entry is blank")
+    if len(text) > LIMIT:
+        raise GateError("the entry is %d characters, the gate allows at most %d" % (len(text), LIMIT))
     try:
         text.encode("utf-8")
-    except UnicodeEncodeError as exc:  # lone surrogates cannot be written as UTF-8
-        raise GateError(f"entry is not valid UTF-8: {exc}") from exc
+    except UnicodeEncodeError as exc:
+        # A lone surrogate has no UTF-8 form, so it can never be stored.
+        raise GateError("the entry is not encodable as UTF-8: %s" % exc) from exc
     return text
 
 
-def write_entry(text: str, output: Path) -> Path:
-    """Atomically write *text* to *output* as UTF-8, mode 0644."""
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+def emit(text, dest):
+    """Write *text* to *dest* atomically as UTF-8, mode 0644."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    handle, tmp_name = tempfile.mkstemp(prefix=".%s." % dest.name, dir=dest.parent)
     tmp = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        tmp.chmod(MODE)
-        os.replace(tmp, output)
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        tmp.chmod(FILE_MODE)
+        os.replace(tmp, dest)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
-    return output
+    return dest
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Write the one-line roast to /output/entry.txt."
-    )
+def build_parser():
+    """The command line: where to write, and the no-write modes."""
+    parser = argparse.ArgumentParser(description="Publish the one-line roast to /output/entry.txt.")
     parser.add_argument(
-        "-o",
         "--out",
+        "-o",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help="destination file (default: %(default)s)",
+        default=OUT_DEFAULT,
+        help="where to write the entry (default: %(default)s)",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="validate the entry and print its stats without writing anything",
+        help="only validate the line and print its size, write nothing",
     )
-    parser.add_argument("--json", action="store_true", help="print a JSON summary")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the result as JSON instead of plain text",
+    )
+    return parser
 
 
-def report(text: str, output: Path | None, as_json: bool) -> None:
-    data = {
+def show(text, dest, as_json):
+    """Report what was (or would be) written."""
+    info = {
         "chars": len(text),
         "bytes": len(text.encode("utf-8")),
-        "lines": 1 if "\n" not in text else text.count("\n") + 1,
-        "output": str(output) if output is not None else None,
+        "lines": 1,
+        "output": None if dest is None else str(dest),
         "entry": text,
     }
     if as_json:
-        print(json.dumps(data, ensure_ascii=False))
-    elif output is None:
-        print(f"{data['chars']} chars, {data['bytes']} bytes, 1 line (not written)")
+        print(json.dumps(info, ensure_ascii=False))
+    elif dest is None:
+        print("%d chars, %d bytes, 1 line, not written" % (info["chars"], info["bytes"]))
     else:
         print(text)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+def main(argv=None):
+    args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
     try:
-        text = check_entry(ENTRY)
+        line = validate(ENTRY)
     except GateError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print("error: %s" % exc, file=sys.stderr)
         return 2
-
     if args.check:
-        report(text, None, args.json)
+        show(line, None, args.json)
         return 0
-
-    write_entry(text, args.out)
-    report(text, args.out, args.json)
+    try:
+        emit(line, args.out)
+    except OSError as exc:
+        # A failed write should end with a plain error, not a traceback.
+        print("error: cannot write %s: %s" % (args.out, exc), file=sys.stderr)
+        return 1
+    show(line, args.out, args.json)
     return 0
 
 
